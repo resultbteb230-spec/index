@@ -45,6 +45,7 @@ const fs = require("fs-extra");
 const path = require("path");
 const axios = require("axios");
 const request = require("request");
+const express = require("express"); // Added express
 
 // Configuration from environment variables
 const PORT = process.env.PORT || 3000;
@@ -59,6 +60,27 @@ const COMMANDS = {
   hello: "Say hello to the bot",
   uptime: "Show bot uptime"
 };
+
+// Create Express server for health checks
+const app = express();
+
+app.get('/', (req, res) => {
+  res.json({
+    status: 'Bot is running',
+    uptime: getUptime(),
+    commands: Object.keys(COMMANDS).length,
+    startTime: new Date(BOT_START_TIME).toISOString()
+  });
+});
+
+app.get('/health', (req, res) => {
+  res.status(200).send('OK');
+});
+
+// Start the HTTP server
+const server = app.listen(PORT, () => {
+  console.log(`✅ HTTP Server is running on port ${PORT}`);
+});
 
 // Get appstate - either from environment variable or file
 let appState;
@@ -114,29 +136,36 @@ setInterval(cleanCache, 1800000);
 login(
   { appState: appState },
   (err, api) => {
-    if (err) return console.error(err);
+    if (err) {
+      console.error("❌ Login error:", err);
+      return;
+    }
+    
     console.log(`🚀 Bot running on port ${PORT}`);
-
     console.log("✅ Bot Login Success!");
 
     api.listenMqtt((err, event) => {
-      if (err) return console.error(err);
+      if (err) {
+        console.error("❌ MQTT error:", err);
+        return;
+      }
 
       const { body, threadID, messageID } = event;
       if (!body) return;
 
-      const lowerBody = body.toLowerCase();
+      const lowerBody = body.toLowerCase().trim();
 
       // Auto-download URL
       const urlRegex = /(https?:\/\/[^\s]+)/g;
       const urls = body.match(urlRegex);
+      
       if (urls && urls.length > 0) {
         urls.forEach(url => downloadVideo(url, threadID, messageID, api));
       } else if (lowerBody === "hello") {
-        api.sendMessage("hello i am aminul bot", threadID, messageID);
-      } else if (lowerBody === "help") {
+        api.sendMessage("Hello! I am Aminul Bot 🤖", threadID, messageID);
+      } else if (lowerBody === "help" || lowerBody === "/help") {
         api.sendMessage(getHelpMessage(), threadID, messageID);
-      } else if (lowerBody === "uptime") {
+      } else if (lowerBody === "uptime" || lowerBody === "/uptime") {
         api.sendMessage(`⏱ Bot Uptime: ${getUptime()}`, threadID, messageID);
       }
     });
@@ -150,19 +179,31 @@ function getUptime() {
   const minutes = Math.floor((uptimeMs / (1000 * 60)) % 60);
   const hours = Math.floor((uptimeMs / (1000 * 60 * 60)) % 24);
   const days = Math.floor(uptimeMs / (1000 * 60 * 60 * 24));
-  if (days > 0) return `${days}d ${hours}h ${minutes}m ${seconds}s`;
-  if (hours > 0) return `${hours}h ${minutes}m ${seconds}s`;
-  if (minutes > 0) return `${minutes}m ${seconds}s`;
-  return `${seconds}s`;
+  
+  const parts = [];
+  if (days > 0) parts.push(`${days}d`);
+  if (hours > 0) parts.push(`${hours}h`);
+  if (minutes > 0) parts.push(`${minutes}m`);
+  parts.push(`${seconds}s`);
+  
+  return parts.join(' ');
 }
 
 // Help message
 function getHelpMessage() {
-  let helpText = `📋 Bot Help - Total Commands: ${Object.keys(COMMANDS).length}\n\n`;
+  let helpText = `📋 **Bot Help Menu**\n`;
+  helpText += `━━━━━━━━━━━━━━\n`;
+  helpText += `Total Commands: ${Object.keys(COMMANDS).length}\n\n`;
+  
   for (const [cmd, desc] of Object.entries(COMMANDS)) {
-    helpText += `/${cmd} - ${desc}\n`;
+    helpText += `▸ ${cmd} - ${desc}\n`;
   }
-  helpText += `\n💬 Or send a video URL to auto-download!`;
+  
+  helpText += `\n💡 **Features:**\n`;
+  helpText += `▸ Send any video URL (YouTube, Facebook, etc.)\n`;
+  helpText += `▸ Auto-download and send video\n`;
+  helpText += `\n⏱ Uptime: ${getUptime()}`;
+  
   return helpText;
 }
 
@@ -175,29 +216,62 @@ async function downloadVideo(url, threadID, messageID, api) {
     const res = await axios.get(apiURL);
     const data = res?.data?.data?.data;
 
-    if (!data) return api.sendMessage("❌ Video data পাওয়া যায়নি।", threadID, messageID);
+    if (!data) {
+      return api.sendMessage("❌ Could not fetch video data. Make sure the URL is valid.", threadID, messageID);
+    }
 
     const { title, high, low } = data;
     const videoURL = high || low;
-    if (!videoURL) return api.sendMessage("❌ Download link পাওয়া যায়নি।", threadID, messageID);
+    
+    if (!videoURL) {
+      return api.sendMessage("❌ No download link available for this video.", threadID, messageID);
+    }
 
     const filePath = path.join(CACHE_DIR, `autolink_${Date.now()}.mp4`);
+    
     request(videoURL)
       .pipe(fs.createWriteStream(filePath))
       .on("close", () => {
         api.sendMessage(
-          { body: `🎬 𝗧𝗜𝗧𝗟𝗘:\n${title || "Unknown"}`, attachment: fs.createReadStream(filePath) },
+          { 
+            body: `🎬 **Title:**\n${title || "Unknown"}`, 
+            attachment: fs.createReadStream(filePath) 
+          },
           threadID,
-          () => fs.unlink(filePath).catch(err => console.error("❌ Error deleting file:", err)),
+          () => {
+            fs.unlink(filePath).catch(err => 
+              console.error("❌ Error deleting file:", err)
+            );
+          },
           messageID
         );
       })
       .on("error", (error) => {
         console.error("Download error:", error);
         api.sendMessage("❌ Video download failed!", threadID, messageID);
+        fs.unlink(filePath).catch(() => {});
       });
   } catch (error) {
     console.error("Error in downloadVideo:", error);
     api.sendMessage("❌ An error occurred while processing your request.", threadID, messageID);
   }
 }
+
+// Graceful shutdown
+process.on('SIGINT', () => {
+  console.log('\n🛑 Shutting down gracefully...');
+  server.close(() => {
+    console.log('✅ HTTP server closed');
+    process.exit(0);
+  });
+});
+
+process.on('SIGTERM', () => {
+  console.log('\n🛑 Received SIGTERM, shutting down...');
+  server.close(() => {
+    console.log('✅ HTTP server closed');
+    process.exit(0);
+  });
+});
+
+console.log("✅ Bot initialization complete. Waiting for messages...");
