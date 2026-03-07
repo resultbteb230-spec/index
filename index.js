@@ -1,3 +1,45 @@
+// Fix for undefined User-Agent header issue in ws/mqtt
+const Module = require('module');
+const originalRequire = Module.prototype.require;
+
+Module.prototype.require = function(id) {
+  const module = originalRequire.apply(this, arguments);
+  
+  // Patch ClientRequest after requiring http/https modules
+  if (id === 'http' || id === 'https') {
+    const originalRequest = module.request;
+    module.request = function(options, ...args) {
+      if (typeof options === 'object' && options !== null && options.headers) {
+        // Replace undefined User-Agent with a valid one
+        if (options.headers['User-Agent'] === undefined) {
+          options.headers['User-Agent'] = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36';
+        }
+      }
+      return originalRequest.call(this, options, ...args);
+    };
+  }
+  
+  return module;
+};
+
+// Also patch the Agent setHeader method to reject undefined values
+const http = require('http');
+const https = require('https');
+const ClientRequest = require('http').ClientRequest;
+const OriginalSetHeader = ClientRequest.prototype.setHeader;
+
+ClientRequest.prototype.setHeader = function(name, value) {
+  if (value === undefined) {
+    // Silently replace undefined headers with a valid User-Agent
+    if (name === 'User-Agent' || name === 'user-agent') {
+      value = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36';
+    } else {
+      return; // Skip undefined headers
+    }
+  }
+  return OriginalSetHeader.call(this, name, value);
+};
+
 const login = require("aminul-new-fca");
 const fs = require("fs-extra");
 const path = require("path");
