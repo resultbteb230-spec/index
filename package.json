@@ -1,0 +1,27 @@
+{
+  "name": "aminulbot",
+  "version": "1.0.0",
+  "description": "Advanced Facebook Messenger Bot by Aminul Sordar",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "keywords": [
+    "facebook-bot",
+    "messenger-bot",
+    "aminulbot"
+  ],
+  "author": "Aminul Sordar",
+  "license": "MIT",
+  "dependencies": {
+    "aminul-new-fca": "^1.0.29",
+    "axios": "^1.6.2",
+    "chalk": "^5.3.0",
+    "express": "^4.19.2",
+    "fs-extra": "^11.2.0",
+    "npmlog": "^7.0.1",
+    "path": "^0.12.7",
+    "request": "^2.88.2",
+    "ws3-fca": "^1.0.0"
+  }
+}
