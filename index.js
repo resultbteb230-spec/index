@@ -3,6 +3,7 @@
 // ============================================
 const cluster = require('cluster');
 const os = require('os');
+const express = require('express'); // যোগ করুন
 
 if (cluster.isMaster) {
   console.log(`🔄 Master process ${process.pid} is running`);
@@ -35,10 +36,9 @@ if (cluster.isMaster) {
   // WORKER PROCESS (your original bot)
   // ============================================
   
-  // ----- Global error handlers to catch and log crashes -----
+  // ----- Global error handlers -----
   process.on('uncaughtException', (err) => {
     console.error('❌ Uncaught Exception:', err);
-    // Give logs time to flush, then exit
     setTimeout(() => process.exit(1), 1000);
   });
 
@@ -54,12 +54,10 @@ if (cluster.isMaster) {
   Module.prototype.require = function(id) {
     const module = originalRequire.apply(this, arguments);
     
-    // Patch ClientRequest after requiring http/https modules
     if (id === 'http' || id === 'https') {
       const originalRequest = module.request;
       module.request = function(options, ...args) {
         if (typeof options === 'object' && options !== null && options.headers) {
-          // Replace undefined User-Agent with a valid one
           if (options.headers['User-Agent'] === undefined) {
             options.headers['User-Agent'] = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36';
           }
@@ -71,7 +69,6 @@ if (cluster.isMaster) {
     return module;
   };
 
-  // Also patch the Agent setHeader method to reject undefined values
   const http = require('http');
   const https = require('https');
   const ClientRequest = require('http').ClientRequest;
@@ -79,11 +76,10 @@ if (cluster.isMaster) {
 
   ClientRequest.prototype.setHeader = function(name, value) {
     if (value === undefined) {
-      // Silently replace undefined headers with a valid User-Agent
       if (name === 'User-Agent' || name === 'user-agent') {
         value = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36';
       } else {
-        return; // Skip undefined headers
+        return;
       }
     }
     return OriginalSetHeader.call(this, name, value);
@@ -95,14 +91,82 @@ if (cluster.isMaster) {
   const axios = require("axios");
   const request = require("request");
 
-  // Configuration from environment variables
+  // Configuration
   const PORT = process.env.PORT || 3000;
   const APPSTATE_JSON = process.env.APPSTATE_JSON;
-
-  // Bot startup time for uptime tracking
   const BOT_START_TIME = Date.now();
 
-  // Define available commands
+  // Express server setup
+  const app = express();
+  
+  app.get('/', (req, res) => {
+    res.send(`
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <title>Aminul Bot Status</title>
+        <style>
+          body { font-family: Arial; text-align: center; padding: 50px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; }
+          .card { background: rgba(255,255,255,0.1); border-radius: 10px; padding: 30px; margin: 20px; }
+          h1 { font-size: 3em; margin-bottom: 20px; }
+          .status { font-size: 1.5em; margin: 20px 0; }
+          .badge { background: #4CAF50; color: white; padding: 5px 15px; border-radius: 20px; display: inline-block; }
+        </style>
+      </head>
+      <body>
+        <div class="card">
+          <h1>🤖 Aminul Bot</h1>
+          <div class="badge">🟢 ONLINE</div>
+          <div class="status">
+            <p>✅ Bot is running successfully!</p>
+            <p>⏱ Uptime: ${getUptime()}</p>
+            <p>📊 Total Commands: ${Object.keys(COMMANDS).length}</p>
+            <p>🆔 Process ID: ${process.pid}</p>
+          </div>
+        </div>
+      </body>
+      </html>
+    `);
+  });
+
+  // Health check endpoint
+  app.get('/health', (req, res) => {
+    res.json({ 
+      status: 'healthy', 
+      uptime: getUptime(),
+      pid: process.pid,
+      timestamp: new Date().toISOString()
+    });
+  });
+
+  // Start web server
+  const server = app.listen(PORT, '0.0.0.0', () => {
+    console.log(`🌐 Web server is running on port ${PORT}`);
+    console.log(`📡 Health check: http://localhost:${PORT}/health`);
+  });
+
+  server.on('error', (error) => {
+    if (error.code === 'EADDRINUSE') {
+      console.error(`❌ Port ${PORT} is already in use!`);
+      console.log('🔄 Trying to kill the process using this port...');
+      
+      // Try to kill the process using this port (Linux/Mac only)
+      const { exec } = require('child_process');
+      exec(`lsof -ti:${PORT} | xargs kill -9`, (err) => {
+        if (err) {
+          console.error('❌ Could not kill the process. Please manually free the port.');
+          process.exit(1);
+        } else {
+          console.log('✅ Port freed. Restarting...');
+          setTimeout(() => process.exit(1), 1000);
+        }
+      });
+    } else {
+      console.error('❌ Server error:', error);
+    }
+  });
+
+  // Define commands
   const COMMANDS = {
     help: "Show all available commands and bot info",
     hello: "Say hello to the bot",
@@ -112,7 +176,7 @@ if (cluster.isMaster) {
     info: "Show admin information"
   };
 
-  // Get appstate - either from environment variable or file
+  // Get appstate
   let appState;
   if (APPSTATE_JSON) {
     try {
@@ -132,17 +196,14 @@ if (cluster.isMaster) {
     }
   } else {
     console.error(`❌ ERROR: Facebook account credentials not found!`);
-    console.error(`📌 Please provide either:`);
-    console.error(`   1. Set APPSTATE_JSON environment variable with your account credentials (JSON)`);
-    console.error(`   2. Add 'appstate.json' file to the project root directory`);
     process.exit(1);
   }
 
-  // Ensure cache folder exists
+  // Cache directory
   const CACHE_DIR = path.join(__dirname, "cache");
   fs.ensureDirSync(CACHE_DIR);
 
-  // Clean up old cache files (older than 1 hour)
+  // Clean cache function
   function cleanCache() {
     fs.readdir(CACHE_DIR, (err, files) => {
       if (err) return console.error("❌ Cache cleanup error:", err);
@@ -151,7 +212,7 @@ if (cluster.isMaster) {
         const filePath = path.join(CACHE_DIR, file);
         fs.stat(filePath, (err, stats) => {
           if (err) return;
-          if (now - stats.mtimeMs > 3600000) { // 1 hour
+          if (now - stats.mtimeMs > 3600000) {
             fs.unlink(filePath).catch(console.error);
           }
         });
@@ -159,7 +220,6 @@ if (cluster.isMaster) {
     });
   }
 
-  // Schedule cache cleanup every 30 minutes
   setInterval(cleanCache, 1800000);
 
   // Bot login
@@ -168,21 +228,20 @@ if (cluster.isMaster) {
     (err, api) => {
       if (err) {
         console.error("❌ Login error:", err);
-        process.exit(1); // Exit to trigger restart
+        process.exit(1);
       }
-      console.log(`🚀 Bot running on port ${PORT}`);
+      
       console.log("✅ Bot Login Success!");
+      console.log(`🤖 Bot is now listening for messages...`);
 
       api.listenMqtt((err, event) => {
         if (err) {
           console.error("❌ listenMqtt error:", err);
-          // Don't exit immediately – let the error be handled by global handlers
           return;
         }
 
         const { body, threadID, messageID, senderID, logMessageType } = event;
         if (!body) {
-          // Handle member join/leave events
           if (logMessageType === "log:subscribe") {
             api.sendMessage("👋 Welcome to the group! Use /help to see available commands.", threadID);
           } else if (logMessageType === "log:unsubscribe") {
@@ -193,7 +252,6 @@ if (cluster.isMaster) {
 
         const lowerBody = body.toLowerCase();
 
-        // Auto-download URL
         const urlRegex = /(https?:\/\/[^\s]+)/g;
         const urls = body.match(urlRegex);
         if (urls && urls.length > 0) {
@@ -228,7 +286,6 @@ if (cluster.isMaster) {
     return `${seconds}s`;
   }
 
-  // Help message
   function getHelpMessage() {
     let helpText = `📋 Bot Help - Total Commands: ${Object.keys(COMMANDS).length}\n\n`;
     for (const [cmd, desc] of Object.entries(COMMANDS)) {
@@ -238,7 +295,6 @@ if (cluster.isMaster) {
     return helpText;
   }
 
-  // Info message function
   function sendInfoMessage(threadID, messageID, api) {
     const avatarURL = "https://graph.facebook.com/100071880593545/picture?height=720&width=720&access_token=6628568379%7Cc1e620fa708a1d5696fb991c1bde5662";
     const imgPath = path.join(CACHE_DIR, "aminul-avatar.png");
@@ -272,7 +328,6 @@ if (cluster.isMaster) {
       });
   }
 
-  // Video downloader
   async function downloadVideo(url, threadID, messageID, api) {
     try {
       api.sendMessage("⏬ Downloading video...", threadID, messageID);
