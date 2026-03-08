@@ -15,11 +15,15 @@
   "license": "MIT",
   "dependencies": {
     "aminul-new-fca": "^1.0.29",
-    "axios": "^1.6.2",
-    "chalk": "^5.3.0",
+    "axios": "^1.13.6",
+    "chalk": "^5.6.2",
+    "cluster": "^0.7.7",
     "express": "^4.19.2",
-    "fs-extra": "^11.2.0",
+    "fs-extra": "^11.3.4",
+    "http": "^0.0.1-security",
+    "https": "^1.0.0",
     "npmlog": "^7.0.1",
+    "os": "^0.1.2",
     "path": "^0.12.7",
     "request": "^2.88.2",
     "ws3-fca": "^1.0.0"
